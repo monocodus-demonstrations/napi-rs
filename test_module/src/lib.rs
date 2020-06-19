@@ -5,8 +5,25 @@ extern crate napi_rs_derive;
 
 use napi::{
   Any, Boolean, CallContext, Env, Error, JsString, Number, Object, Result, Status, Task, Value,
+  Undefined, Function, Buffer,
+  threadsafe_function::{
+    ToJs,
+    ThreadsafeFunction,
+  }
+};
+use napi::sys::{
+  napi_threadsafe_function_call_mode:: {
+    napi_tsfn_blocking,
+  },
+  napi_threadsafe_function_release_mode:: {
+    napi_tsfn_release,
+  }
 };
 use std::convert::TryInto;
+use std::thread;
+use std::path::Path;
+use std::ops::Deref;
+use tokio;
 
 register_module!(test_module, init);
 
@@ -24,15 +41,21 @@ fn init(env: &Env, exports: &mut Value<Object>) -> Result<()> {
     "testObjectIsDate",
     env.create_function("testObjectIsDate", test_object_is_date)?,
   )?;
-
   exports.set_named_property(
     "createExternal",
     env.create_function("createExternal", create_external)?,
   )?;
-
   exports.set_named_property(
     "getExternalCount",
     env.create_function("getExternalCount", get_external_count)?,
+  )?;
+  exports.set_named_property(
+    "testThreadsafeFunction",
+    env.create_function("testThreadsafeFunction", test_threadsafe_function)?
+  )?;
+  exports.set_named_property(
+    "testTokioReadfile",
+    env.create_function("testTokioReadfile", test_tokio_readfile)?
   )?;
   Ok(())
 }
@@ -57,6 +80,22 @@ impl Task for ComputeFib {
 
   fn resolve(&self, env: &mut Env, output: Self::Output) -> Result<Value<Self::JsValue>> {
     env.create_uint32(output)
+  }
+}
+
+#[derive(Clone, Copy)]
+struct HandleNumber;
+
+impl ToJs for HandleNumber {
+  type Output = u8;
+  type JsValue = Number;
+
+  fn resolve(&self, env: &mut Env, output: &mut Self::Output) -> Result<(u64, Value<Self::JsValue>)> {
+    let argv: u64 = 1;
+
+    let value = env.create_uint32(*output as u32).unwrap();
+
+    Ok((argv, value))
   }
 }
 
@@ -111,4 +150,70 @@ fn get_external_count(ctx: CallContext) -> Result<Value<Number>> {
   let attached_obj = ctx.get::<Object>(0)?;
   let native_object = ctx.env.get_value_external::<NativeObject>(&attached_obj)?;
   ctx.env.create_int32(native_object.count)
+}
+
+#[js_function(1)]
+fn test_threadsafe_function(ctx: CallContext) -> Result<Value<Undefined>> {
+  let func: Value<Function> = ctx.get::<Function>(0)?;
+
+  let to_js = HandleNumber;
+  let tsfn = ThreadsafeFunction::create(*ctx.env, func, to_js, 0)?;
+
+  thread::spawn(move || {
+    let output: u8 = 42;
+    // It's okay to call a threadsafe function multiple times.
+    tsfn.call(Ok(output), napi_tsfn_blocking).unwrap();
+    tsfn.call(Ok(output), napi_tsfn_blocking).unwrap();
+    tsfn.release(napi_tsfn_release).unwrap();
+  });
+
+  Ok(Env::get_undefined(ctx.env)?)
+}
+
+#[derive(Copy, Clone)]
+struct HandleBuffer;
+
+impl ToJs for HandleBuffer {
+  type Output = Vec<u8>;
+  type JsValue = Buffer;
+
+  fn resolve(&self, env: &mut Env, output: &mut Self::Output) -> Result<(u64, Value<Self::JsValue>)> {
+    // TODO avoid copying buffer
+    let value = env.create_buffer_with_data(output.to_vec())?;
+    Ok((1u64, value))
+  }
+}
+
+async fn read_file_content(filepath: &Path) -> Result<Vec<u8>> {
+  match tokio::fs::read(filepath).await {
+    Err(_) => {
+      Err(Error {
+        status: Status::Unknown,
+        reason: Some(String::from("failed to read file")),
+      })
+    },
+    Ok(v) => {
+      Ok(v)
+    }
+  }
+}
+
+#[js_function(2)]
+fn test_tokio_readfile(ctx: CallContext) -> Result<Value<Undefined>> {
+  let js_filepath: Value<JsString> = ctx.get::<JsString>(0)?;
+  let js_func: Value<Function> = ctx.get::<Function>(1)?;
+  let path_str = String::from(js_filepath.as_str().unwrap());
+
+  let to_js = HandleBuffer;
+  let tsfn = ThreadsafeFunction::create(*ctx.env, js_func, to_js, 0)?;
+  let mut rt = tokio::runtime::Runtime::new().unwrap();
+
+  rt.block_on(async move {
+    let mut filepath = Path::new(path_str.deref());
+    let ret = read_file_content(&mut filepath).await;
+    let _ = tsfn.call(ret, napi_tsfn_blocking);
+    tsfn.release(napi_tsfn_release).unwrap();
+  });
+
+  Ok(Env::get_undefined(ctx.env)?)
 }
