@@ -142,15 +142,13 @@ unsafe extern "C" fn call_js_cb<T: ToJs>(
       ptr::null_mut(),
     );
   } else {
-    // TODO implement napi_create_error
-    // let err = ret.err().unwrap();
-    let mut err_obj = env.create_object().unwrap();
+    let mut err = env.create_error(ret.err().unwrap()).unwrap();
     status = sys::napi_call_function(
       raw_env,
       recv,
       js_callback,
       1,
-      &mut err_obj.raw_value,
+      &mut err.raw_value,
       ptr::null_mut(),
     );
   }

@@ -50,6 +50,10 @@ fn init(env: &Env, exports: &mut Value<Object>) -> Result<()> {
     env.create_function("getExternalCount", get_external_count)?,
   )?;
   exports.set_named_property(
+    "testTsfnError",
+    env.create_function("testTsfnError", test_tsfn_error)?,
+  )?;
+  exports.set_named_property(
     "testThreadsafeFunction",
     env.create_function("testThreadsafeFunction", test_threadsafe_function)?
   )?;
@@ -80,22 +84,6 @@ impl Task for ComputeFib {
 
   fn resolve(&self, env: &mut Env, output: Self::Output) -> Result<Value<Self::JsValue>> {
     env.create_uint32(output)
-  }
-}
-
-#[derive(Clone, Copy)]
-struct HandleNumber;
-
-impl ToJs for HandleNumber {
-  type Output = u8;
-  type JsValue = Number;
-
-  fn resolve(&self, env: &mut Env, output: &mut Self::Output) -> Result<(u64, Value<Self::JsValue>)> {
-    let argv: u64 = 1;
-
-    let value = env.create_uint32(*output as u32).unwrap();
-
-    Ok((argv, value))
   }
 }
 
@@ -152,6 +140,22 @@ fn get_external_count(ctx: CallContext) -> Result<Value<Number>> {
   ctx.env.create_int32(native_object.count)
 }
 
+#[derive(Clone, Copy)]
+struct HandleNumber;
+
+impl ToJs for HandleNumber {
+  type Output = u8;
+  type JsValue = Number;
+
+  fn resolve(&self, env: &mut Env, output: &mut Self::Output) -> Result<(u64, Value<Self::JsValue>)> {
+    let argv: u64 = 1;
+
+    let value = env.create_uint32(*output as u32).unwrap();
+
+    Ok((argv, value))
+  }
+}
+
 #[js_function(1)]
 fn test_threadsafe_function(ctx: CallContext) -> Result<Value<Undefined>> {
   let func: Value<Function> = ctx.get::<Function>(0)?;
@@ -164,6 +168,23 @@ fn test_threadsafe_function(ctx: CallContext) -> Result<Value<Undefined>> {
     // It's okay to call a threadsafe function multiple times.
     tsfn.call(Ok(output), napi_tsfn_blocking).unwrap();
     tsfn.call(Ok(output), napi_tsfn_blocking).unwrap();
+    tsfn.release(napi_tsfn_release).unwrap();
+  });
+
+  Ok(Env::get_undefined(ctx.env)?)
+}
+
+#[js_function(1)]
+fn test_tsfn_error(ctx: CallContext) -> Result<Value<Undefined>> {
+  let func = ctx.get::<Function>(0)?;
+  let to_js = HandleNumber;
+  let tsfn = ThreadsafeFunction::create(*ctx.env, func, to_js, 0)?;
+
+  thread::spawn(move || {
+    tsfn.call(Err(Error {
+      status: napi::sys::Status::Unknown,
+      reason: Some(String::from("invalid")),
+    }), napi_tsfn_blocking).unwrap();
     tsfn.release(napi_tsfn_release).unwrap();
   });
 
