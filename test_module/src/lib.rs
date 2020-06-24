@@ -5,12 +5,19 @@ extern crate napi_rs_derive;
 
 use napi::{
   Any, Boolean, CallContext, Env, Error, JsString, Number, Object, Result, Status, Task, Value,
-  Undefined, Function, Buffer,
-  threadsafe_function::{
-    ToJs,
-    ThreadsafeFunction,
-  }
+  Undefined,
 };
+
+#[cfg(napi4)]
+use napi::{Function, Buffer};
+
+#[cfg(napi4)]
+use napi::threadsafe_function::{
+  ToJs,
+  ThreadsafeFunction,
+};
+
+#[cfg(napi4)]
 use napi::sys::{
   napi_threadsafe_function_call_mode:: {
     napi_tsfn_blocking,
@@ -20,9 +27,14 @@ use napi::sys::{
   }
 };
 use std::convert::TryInto;
+
+#[cfg(napi4)]
 use std::thread;
+#[cfg(napi4)]
 use std::path::Path;
+#[cfg(napi4)]
 use std::ops::Deref;
+#[cfg(napi4)]
 use tokio;
 
 register_module!(test_module, init);
@@ -140,9 +152,11 @@ fn get_external_count(ctx: CallContext) -> Result<Value<Number>> {
   ctx.env.create_int32(native_object.count)
 }
 
+#[cfg(napi4)]
 #[derive(Clone, Copy)]
 struct HandleNumber;
 
+#[cfg(napi4)]
 impl ToJs for HandleNumber {
   type Output = u8;
   type JsValue = Number;
@@ -156,6 +170,7 @@ impl ToJs for HandleNumber {
   }
 }
 
+#[cfg(napi4)]
 #[js_function(1)]
 fn test_threadsafe_function(ctx: CallContext) -> Result<Value<Undefined>> {
   let func: Value<Function> = ctx.get::<Function>(0)?;
@@ -174,6 +189,13 @@ fn test_threadsafe_function(ctx: CallContext) -> Result<Value<Undefined>> {
   Ok(Env::get_undefined(ctx.env)?)
 }
 
+#[cfg(not(napi4))]
+#[js_function]
+fn test_threadsafe_function(ctx: CallContext) -> Result<Value<Undefined>> {
+  ctx.env.get_undefined()
+}
+
+#[cfg(napi4)]
 #[js_function(1)]
 fn test_tsfn_error(ctx: CallContext) -> Result<Value<Undefined>> {
   let func = ctx.get::<Function>(0)?;
@@ -191,9 +213,17 @@ fn test_tsfn_error(ctx: CallContext) -> Result<Value<Undefined>> {
   Ok(Env::get_undefined(ctx.env)?)
 }
 
+#[cfg(not(napi4))]
+#[js_function]
+fn test_tsfn_error(ctx: CallContext) -> Result<Value<Undefined>> {
+  ctx.env.get_undefined()
+}
+
+#[cfg(napi4)]
 #[derive(Copy, Clone)]
 struct HandleBuffer;
 
+#[cfg(napi4)]
 impl ToJs for HandleBuffer {
   type Output = Vec<u8>;
   type JsValue = Buffer;
@@ -205,6 +235,7 @@ impl ToJs for HandleBuffer {
   }
 }
 
+#[cfg(napi4)]
 async fn read_file_content(filepath: &Path) -> Result<Vec<u8>> {
   match tokio::fs::read(filepath).await {
     Err(_) => {
@@ -219,6 +250,7 @@ async fn read_file_content(filepath: &Path) -> Result<Vec<u8>> {
   }
 }
 
+#[cfg(napi4)]
 #[js_function(2)]
 fn test_tokio_readfile(ctx: CallContext) -> Result<Value<Undefined>> {
   let js_filepath: Value<JsString> = ctx.get::<JsString>(0)?;
@@ -237,4 +269,10 @@ fn test_tokio_readfile(ctx: CallContext) -> Result<Value<Undefined>> {
   });
 
   Ok(Env::get_undefined(ctx.env)?)
+}
+
+#[cfg(not(napi4))]
+#[js_function]
+fn test_tokio_readfile(ctx: CallContext) -> Result<Value<Undefined>> {
+  ctx.env.get_undefined()
 }

@@ -2,6 +2,7 @@ extern crate cfg_if;
 #[cfg(windows)]
 extern crate reqwest;
 
+use std::process::Command;
 use cfg_if::cfg_if;
 
 cfg_if! {
@@ -54,14 +55,37 @@ cfg_if! {
         println!("cargo:rustc-cdylib-link-arg=delayimp.lib");
         println!("cargo:rustc-cdylib-link-arg=/DELAYLOAD:node.exe");
       }
+
+      setup_napi_cfg();
     }
   } else if #[cfg(target_os = "macos")] {
     /// Set up the build environment by setting Cargo configuration variables.
     pub fn setup() {
       println!("cargo:rustc-cdylib-link-arg=-undefined");
       println!("cargo:rustc-cdylib-link-arg=dynamic_lookup");
+      setup_napi_cfg();
     }
   } else {
-    pub fn setup() { }
+    pub fn setup() {
+      setup_napi_cfg();
+    }
+  }
+}
+
+fn setup_napi_cfg() {
+  let napi_version = String::from_utf8(
+    Command::new("node")
+      .args(&[
+        "-e",
+        "console.log(process.versions.napi)",
+      ])
+      .output()
+      .unwrap()
+      .stdout,
+  )
+  .unwrap();
+
+  for version in 2..napi_version.trim().parse::<u32>().unwrap() {
+    println!("cargo:rustc-cfg=napi{}", version);
   }
 }
